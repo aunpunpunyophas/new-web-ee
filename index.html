@@ -301,6 +301,39 @@
       align-items: center;
       color: #6f4f62;
       font-weight: 700;
+      gap: 8px;
+    }
+    .cart-form {
+      display: grid;
+      grid-template-columns: 1fr 110px;
+      gap: 8px;
+    }
+    .cart-input {
+      border: 1px solid #efdae7;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #6f4f62;
+      font-size: 13px;
+      outline: none;
+    }
+    .cart-input:focus {
+      border-color: #d989b2;
+      box-shadow: 0 0 0 3px rgba(217, 137, 178, 0.18);
+    }
+    .order-message {
+      margin: 0;
+      min-height: 18px;
+      font-size: 12px;
+      color: #8f7a8a;
+    }
+    .order-message.error {
+      color: #b25272;
+    }
+    .cart-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
     .cart-clear {
       border: 0;
@@ -311,6 +344,22 @@
       font-size: 12px;
       font-weight: 600;
       cursor: pointer;
+    }
+    .checkout-btn {
+      border: 0;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #f383b3, #cd69a1);
+      color: #fff;
+      padding: 6px 11px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(205, 105, 161, 0.25);
+    }
+    .checkout-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      box-shadow: none;
     }
     @media (max-width: 480px) {
       .app {
@@ -371,6 +420,9 @@
         bottom: 64px;
         max-height: 70vh;
       }
+      .cart-form {
+        grid-template-columns: 1fr;
+      }
     }
     @media (min-width: 860px) {
       body {
@@ -427,9 +479,18 @@
     </div>
     <p id="cartEmpty" class="cart-empty">ยังไม่มีรายการในตะกร้า</p>
     <ul id="cartItems" class="cart-items"></ul>
+    <div class="cart-form">
+      <input id="customerNameInput" class="cart-input" type="text" placeholder="ชื่อลูกค้า (ไม่บังคับ)">
+      <input id="tableNoInput" class="cart-input" type="text" placeholder="เลขโต๊ะ / เบอร์โทร">
+    </div>
+    <input id="orderNoteInput" class="cart-input" type="text" placeholder="หมายเหตุ (ไม่บังคับ)">
+    <p id="orderMessage" class="order-message"></p>
     <div class="cart-foot">
       <span id="cartTotal">รวม ฿0</span>
-      <button id="clearCartBtn" class="cart-clear" type="button">ล้างตะกร้า</button>
+      <div class="cart-actions">
+        <button id="clearCartBtn" class="cart-clear" type="button">ล้างตะกร้า</button>
+        <button id="checkoutBtn" class="checkout-btn" type="button">ยืนยันออเดอร์</button>
+      </div>
     </div>
   </aside>
 
@@ -483,7 +544,13 @@
     var cartItemsEl = document.getElementById("cartItems");
     var cartEmptyEl = document.getElementById("cartEmpty");
     var cartTotalEl = document.getElementById("cartTotal");
+    var customerNameInputEl = document.getElementById("customerNameInput");
+    var tableNoInputEl = document.getElementById("tableNoInput");
+    var orderNoteInputEl = document.getElementById("orderNoteInput");
+    var orderMessageEl = document.getElementById("orderMessage");
+    var checkoutBtnEl = document.getElementById("checkoutBtn");
     var cartState = [];
+    var isSubmittingOrder = false;
 
     function escapeHtml(text) {
       return String(text || "")
@@ -545,6 +612,80 @@
       return total;
     }
 
+    function setOrderMessage(message, isError) {
+      orderMessageEl.textContent = message || "";
+      if (isError) {
+        orderMessageEl.classList.add("error");
+      } else {
+        orderMessageEl.classList.remove("error");
+      }
+    }
+
+    function updateCheckoutButtonState() {
+      checkoutBtnEl.disabled = getCartCount() === 0 || isSubmittingOrder;
+    }
+
+    function buildOrderPayload() {
+      return {
+        customerName: String(customerNameInputEl.value || "").trim(),
+        tableNo: String(tableNoInputEl.value || "").trim(),
+        note: String(orderNoteInputEl.value || "").trim(),
+        items: cartState.map(function (item) {
+          return {
+            name: item.name,
+            price: Number(item.price || 0),
+            qty: Number(item.qty || 0),
+            image: item.image || ""
+          };
+        })
+      };
+    }
+
+    async function submitOrder() {
+      if (isSubmittingOrder || getCartCount() === 0) {
+        return;
+      }
+
+      var payload = buildOrderPayload();
+      var response;
+      var result;
+
+      isSubmittingOrder = true;
+      updateCheckoutButtonState();
+      setOrderMessage("กำลังส่งออเดอร์...", false);
+
+      try {
+        response = await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        try {
+          result = await response.json();
+        } catch (jsonError) {
+          result = null;
+        }
+
+        if (!response.ok) {
+          throw new Error((result && result.message) || "ส่งออเดอร์ไม่สำเร็จ");
+        }
+
+        cartState = [];
+        updateCartUI();
+        setOrderMessage("ส่งออเดอร์สำเร็จ เลขที่ #" + result.orderId, false);
+      } catch (error) {
+        var msg = error && error.message ? error.message : "";
+        if (msg.toLowerCase && msg.toLowerCase().indexOf("failed to fetch") !== -1) {
+          msg = "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณารัน backend ก่อน";
+        }
+        setOrderMessage(msg || "ส่งออเดอร์ไม่สำเร็จ", true);
+      } finally {
+        isSubmittingOrder = false;
+        updateCheckoutButtonState();
+      }
+    }
+
     function addToCart(item) {
       var key = item.name + "||" + Number(item.price || 0);
       var itemImage = item.image && item.image.trim() ? item.image : fallbackImage;
@@ -576,6 +717,7 @@
       cartBadgeEl.textContent = count;
       cartBadgeEl.style.display = count > 0 ? "inline-flex" : "none";
       cartTotalEl.textContent = "รวม ฿" + Number(total).toLocaleString("th-TH");
+      updateCheckoutButtonState();
 
       if (count === 0) {
         cartEmptyEl.style.display = "block";
@@ -652,8 +794,10 @@
     cartOverlayEl.addEventListener("click", closeCart);
     clearCartBtnEl.addEventListener("click", function () {
       cartState = [];
+      setOrderMessage("", false);
       updateCartUI();
     });
+    checkoutBtnEl.addEventListener("click", submitOrder);
 
     renderStore();
     renderTabs();
